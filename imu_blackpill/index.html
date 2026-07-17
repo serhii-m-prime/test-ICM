@@ -148,11 +148,11 @@
         const magnetometerChart = createVectorChart('magnetometerChart', 'µT');
 
         const fftChart = new Chart(document.getElementById('fftChart'), {
-            type: 'line',
+            type: 'bar',
             data: {
                 labels: [],
                 datasets: [
-                    { label: 'Спектр', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.12)', borderWidth: 2, pointRadius: 0, fill: true }
+                    { label: 'Спектр', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.55)', borderWidth: 1, barPercentage: 1.0, categoryPercentage: 1.0 }
                 ]
             },
             options: {
