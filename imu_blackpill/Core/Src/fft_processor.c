@@ -42,13 +42,13 @@ uint8_t FFT_Processor_Process(FFT_Processor *processor, FFT_Result *result) {
 	);
 
 	arm_max_f32(
-	    &result->magnitude[2], // cut 2 first bins - DC & 0-4 HZ as noise
-	    FFT_SIZE / 2 - 2,
+	    &result->magnitude[1], // cut first bins - DC
+	    FFT_SIZE / 2 - 1,
 	    &max_value,
 	    &max_index
 	);
 
-	max_index += 2;
+	max_index += 1;
 
 	result->frequency_resolution = FFT_SAMPLE_RATE_HZ / (float32_t) FFT_SIZE;
 	result->peak_frequency = (float32_t) max_index * result->frequency_resolution;
