@@ -53,7 +53,6 @@ TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
-DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 ICM20948 imu;
@@ -84,7 +83,6 @@ MAVLink_Service mavlink_service;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM3_Init(void);
@@ -125,7 +123,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_SPI2_Init();
   MX_USART1_UART_Init();
   MX_TIM3_Init();
@@ -186,7 +183,6 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-		UART_Output_Process(&uart_output);
 
 		uint8_t raw_fft_ready = FFT_Processor_Process(&fft_raw_processor,
 				&fft_raw_result);
@@ -385,7 +381,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 460800;
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -435,22 +431,6 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA2_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA2_Stream7_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
 
 }
 
@@ -512,18 +492,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		if (imu_sensor.initialized_components & SENSOR_MAGNETOMETER) {
 			ImuSensor_ReadMagnetometer(&imu_sensor, &magnetometer_data);
 		}
-	}
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-	if (huart == uart_output.uart) {
-		UART_Output_TxComplete(&uart_output);
-	}
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
-	if (huart == uart_output.uart) {
-		UART_Output_TxError(&uart_output);
 	}
 }
 /* USER CODE END 4 */

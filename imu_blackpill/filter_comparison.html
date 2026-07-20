@@ -67,7 +67,11 @@
     <script>
         let port;
         let reader;
+		let keepReading = false;
+		let recoveringFromReadError = false;
         let inputBuffer = '';
+		let timeChartRenderScheduled = false;
+		let fftChartRenderScheduled = false;
 
         const sampleLimit = 240;
         const statusBadge = document.getElementById('statusBadge');
@@ -171,12 +175,30 @@
             }
         });
 
+		function scheduleTimeChartRender() {
+			if (timeChartRenderScheduled) return;
+			timeChartRenderScheduled = true;
+			requestAnimationFrame(() => {
+				rawChart.update('none');
+				handledChart.update('none');
+				timeChartRenderScheduled = false;
+			});
+		}
+
+		function scheduleFftChartRender() {
+			if (fftChartRenderScheduled) return;
+			fftChartRenderScheduled = true;
+			requestAnimationFrame(() => {
+				fftChart.update('none');
+				fftChartRenderScheduled = false;
+			});
+		}
+
         function appendTimeSample(chart, timeSeconds, value) {
             chart.data.datasets[0].data.push({ x: timeSeconds, y: value });
             if (chart.data.datasets[0].data.length > sampleLimit) {
                 chart.data.datasets[0].data.shift();
             }
-            chart.update('none');
         }
 
         function applyFilterDescription(description) {
@@ -218,6 +240,7 @@
                 appendTimeSample(handledChart, timeMs / 1000, handled);
                 rawValue.textContent = `${raw.toFixed(4)} g`;
                 handledValue.textContent = `${handled.toFixed(4)} g`;
+				scheduleTimeChartRender();
                 return;
             }
 
@@ -238,7 +261,7 @@
 				fftChart.data.labels = handledSpectrum.map((_, index) => (index * resolution).toFixed(2));
 				fftChart.data.datasets[0].data = rawSpectrum.map(Number);
 				fftChart.data.datasets[1].data = handledSpectrum.map(Number);
-                fftChart.update('none');
+				scheduleFftChartRender();
             }
         }
 
@@ -254,31 +277,50 @@
         }
 
         async function readSerial() {
-            const decoder = new TextDecoderStream();
-            const streamClosed = port.readable.pipeTo(decoder.writable);
-            reader = decoder.readable.getReader();
+			const decoder = new TextDecoder();
 
-            try {
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    inputBuffer += value;
-                    const lines = inputBuffer.split('\n');
-                    inputBuffer = lines.pop();
-                    lines.forEach(parseLine);
-                }
-            } catch (error) {
-                if (port) {
-                    statusBadge.textContent = `Помилка читання: ${error.message}`;
-                    statusBadge.className = 'px-3 py-2 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30';
-                }
-            } finally {
-                reader.releaseLock();
-                await streamClosed.catch(() => {});
-            }
+			while (keepReading && port?.readable) {
+				const activeReader = port.readable.getReader();
+				reader = activeReader;
+
+				try {
+					while (keepReading) {
+						const { value, done } = await activeReader.read();
+						if (done) break;
+						if (recoveringFromReadError) {
+							recoveringFromReadError = false;
+							statusBadge.textContent = 'Підключено · потік відновлено';
+							statusBadge.className = 'px-3 py-2 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+						}
+						inputBuffer += decoder.decode(value, { stream: true });
+
+						let newlineIndex;
+						while ((newlineIndex = inputBuffer.indexOf('\n')) !== -1) {
+							const line = inputBuffer.slice(0, newlineIndex);
+							inputBuffer = inputBuffer.slice(newlineIndex + 1);
+							parseLine(line);
+						}
+					}
+				} catch (error) {
+					if (keepReading && port) {
+						recoveringFromReadError = true;
+						statusBadge.textContent = `Помилка читання: ${error.message}; відновлення…`;
+						statusBadge.className = 'px-3 py-2 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30';
+					}
+				} finally {
+					activeReader.releaseLock();
+					if (reader === activeReader) reader = null;
+				}
+
+				if (keepReading) {
+					await new Promise(resolve => setTimeout(resolve, 20));
+				}
+			}
         }
 
         async function disconnect() {
+			keepReading = false;
+			recoveringFromReadError = false;
             if (reader) await reader.cancel().catch(() => {});
             if (port) await port.close().catch(() => {});
             reader = null;
@@ -296,11 +338,12 @@
 
             try {
                 port = await navigator.serial.requestPort();
-                await port.open({ baudRate: 115200 });
+				await port.open({ baudRate: 460800, bufferSize: 1024 * 1024 });
                 statusBadge.textContent = 'Підключено';
-                statusBadge.className = 'px-3 py-2 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                connectBtn.textContent = 'Відключити';
-                readSerial();
+				statusBadge.className = 'px-3 py-2 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+				connectBtn.textContent = 'Відключити';
+				keepReading = true;
+				readSerial();
             } catch (error) {
                 await disconnect();
                 alert(`Помилка підключення: ${error.message}`);

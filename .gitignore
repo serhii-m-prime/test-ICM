@@ -54,5 +54,6 @@ dkms.conf
 # debug information files
 *.dwo
 imu_blackpill/Debug/*
+imu_blackpill/Release/*
 .build-temp/*
 imu_blackpill/.settings/*
