@@ -35,23 +35,24 @@ uint8_t FFT_Processor_Process(FFT_Processor *processor, FFT_Result *result) {
 	arm_rfft_fast_f32(&processor->handler, processor->input, processor->output, 0);
 	result->magnitude[0] = fabsf(processor->output[0]);
 
-	for (uint32_t i = 1; i < FFT_SIZE / 2; i++) {
-		float32_t real = processor->output[2 * i];
-		float32_t imaginary = processor->output[2 * i + 1];
-		result->magnitude[i] = sqrtf(real * real + imaginary * imaginary);
-	}
+	arm_cmplx_mag_f32(
+	    &processor->output[2],
+	    &result->magnitude[1],
+	    FFT_SIZE / 2 - 1
+	);
 
-	for (uint32_t i = 2; i < FFT_SIZE / 2; i++) {
-		if (result->magnitude[i] > max_value) {
-			max_value = result->magnitude[i];
-			max_index = i;
-		}
-	}
+	arm_max_f32(
+	    &result->magnitude[2], // cut 2 first bins - DC & 0-4 HZ as noise
+	    FFT_SIZE / 2 - 2,
+	    &max_value,
+	    &max_index
+	);
+
+	max_index += 2;
 
 	result->frequency_resolution = FFT_SAMPLE_RATE_HZ / (float32_t) FFT_SIZE;
-	result->peak_frequency = (float32_t) max_index
-			* result->frequency_resolution;
-	result->peak_amplitude = max_value;
+	result->peak_frequency = (float32_t) max_index * result->frequency_resolution;
+	result->peak_amplitude = 2.0f * max_value / (float32_t)FFT_SIZE;
 	processor->ready = 0;
 
 	return 1;
