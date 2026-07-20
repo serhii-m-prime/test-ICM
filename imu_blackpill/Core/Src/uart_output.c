@@ -26,6 +26,17 @@ void UART_Output_Status(UART_Output *output, const char *message) {
 	UART_Output_Send(output, buffer);
 }
 
+void UART_Output_FilterStatus(UART_Output *output, const char *message,
+		const SignalFilterConfig *filter_config) {
+	char buffer[256];
+	char filter_description[112];
+
+	SignalFilterConfig_FormatDescription(filter_config, filter_description,
+			sizeof(filter_description));
+	sprintf(buffer, "[3,\"%s\",\"%s\"]\r\n", message, filter_description);
+	UART_Output_Send(output, buffer);
+}
+
 static void UART_Output_FormatVector(char *buffer, const float *vector,
 		uint8_t valid) {
 	if (valid) {
@@ -59,17 +70,36 @@ void UART_Output_SensorData(UART_Output *output,
 	UART_Output_Send(output, buffer);
 }
 
-void UART_Output_FFTResult(UART_Output *output, const FFT_Result *result) {
+void UART_Output_AccelerometerComparison(UART_Output *output,
+		uint32_t time_ms, float raw_value, float handled_value) {
 	char buffer[96];
 
-	sprintf(buffer, "[2,[%.4f,%.4f,%.4f],[", result->peak_frequency,
-			result->peak_amplitude, result->frequency_resolution);
+	sprintf(buffer, "[4,[%lu,%.4f,%.4f]]\r\n", (unsigned long) time_ms,
+			raw_value, handled_value);
 	UART_Output_Send(output, buffer);
+}
 
+static void UART_Output_FFTSpectrum(UART_Output *output, char *buffer,
+		const FFT_Result *result) {
 	for (uint32_t i = 0; i < FFT_SIZE / 2; i++) {
 		sprintf(buffer, i == 0 ? "%.4f" : ",%.4f", result->magnitude[i]);
 		UART_Output_Send(output, buffer);
 	}
+}
 
+void UART_Output_FFTComparison(UART_Output *output,
+		const FFT_Result *raw_result, const FFT_Result *handled_result) {
+	char buffer[96];
+
+	/* Keep handled FFT in fields 0..2 and message[2] for index.html compatibility. */
+	sprintf(buffer, "[2,[%.4f,%.4f,%.4f,%.4f,%.4f],[",
+			handled_result->peak_frequency, handled_result->peak_amplitude,
+			handled_result->frequency_resolution, raw_result->peak_frequency,
+			raw_result->peak_amplitude);
+	UART_Output_Send(output, buffer);
+
+	UART_Output_FFTSpectrum(output, buffer, handled_result);
+	UART_Output_Send(output, "],[");
+	UART_Output_FFTSpectrum(output, buffer, raw_result);
 	UART_Output_Send(output, "]]\r\n");
 }

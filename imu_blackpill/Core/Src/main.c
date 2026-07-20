@@ -25,6 +25,7 @@
 #include "fft_processor.h"
 #include "uart_output.h"
 #include "app_config.h"
+#include "signal_filter_config.h"
 #ifdef APP_MAVLINK_ENABLED
 #include "mavlink_service.h"
 #endif
@@ -37,9 +38,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#ifndef REQUIRED_SENSOR_COMPONENTS
-#define REQUIRED_SENSOR_COMPONENTS (SENSOR_ACCELEROMETER | SENSOR_GYROSCOPE | SENSOR_MAGNETOMETER)
-#endif
+#define REQUIRED_SENSOR_COMPONENTS APP_REQUIRED_SENSOR_COMPONENTS
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,13 +57,20 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 ICM20948 imu;
 ImuSensor imu_sensor;
-AccelerometerData accelerometer_data;
+AccelerometerData accelerometer_raw_data;
+AccelerometerData accelerometer_filtered_data;
 GyroscopeData gyroscope_data;
 MagnetometerData magnetometer_data;
 ImuCalibrationData calibration_data;
-FFT_Processor fft_processor;
-FFT_Result fft_result;
+FFT_Processor fft_raw_processor;
+FFT_Processor fft_handled_processor;
+FFT_Result fft_raw_result;
+FFT_Result fft_handled_result;
 uint8_t fft_output_counter;
+SignalFilterChain accelerometer_filter[3];
+volatile uint32_t accelerometer_comparison_time_ms;
+volatile float accelerometer_comparison_raw_value;
+volatile float accelerometer_comparison_handled_value;
 
 #define FFT_OUTPUT_DECIMATION 4
 UART_Output uart_output;
@@ -125,28 +131,46 @@ int main(void)
 	HAL_Delay(100);
 	ICM20948_Create(&imu, &hspi2, IMU_CS_GPIO_Port, IMU_CS_Pin);
 	ICM20948_Bind(&imu_sensor, &imu);
-	FFT_Processor_Init(&fft_processor);
+	FFT_Processor_Init(&fft_raw_processor);
+	FFT_Processor_Init(&fft_handled_processor);
+	for (uint8_t axis = 0U; axis < 3U; axis++) {
+		if (!SignalFilterChain_Init(&accelerometer_filter[axis],
+				&accelerometer_filter_config)) {
+			Error_Handler();
+		}
+	}
 	UART_Output_Init(&uart_output, &huart1);
 #ifdef APP_MAVLINK_ENABLED
 	MAVLink_Service_Init(&mavlink_service, &huart2);
 #endif
+#if APP_UART_STATUS_STREAM_ENABLED
 	UART_Output_Status(&uart_output, "initializing sensor components");
+#endif
 
 	if (ImuSensor_Init(&imu_sensor, REQUIRED_SENSOR_COMPONENTS)) {
+#if APP_UART_STATUS_STREAM_ENABLED
 		UART_Output_Status(&uart_output, "sensor components initialized");
+#endif
 		if (REQUIRED_SENSOR_COMPONENTS
 				& (SENSOR_ACCELEROMETER | SENSOR_GYROSCOPE)) {
+#if APP_UART_STATUS_STREAM_ENABLED
 			UART_Output_Status(&uart_output, "calibrating");
+#endif
 			if (!ImuSensor_Calibrate(&imu_sensor, &calibration_data)) {
 				UART_Output_Error(&uart_output, "calibration failed",
 				REQUIRED_SENSOR_COMPONENTS, imu_sensor.initialized_components);
 			} else {
-				UART_Output_Status(&uart_output, "calibration complete");
+#if APP_UART_STATUS_STREAM_ENABLED
+				UART_Output_FilterStatus(&uart_output, "calibration complete",
+						&accelerometer_filter_config);
 				UART_Output_Status(&uart_output, "streaming");
+#endif
 				HAL_TIM_Base_Start_IT(&htim3);
 			}
 		} else {
+#if APP_UART_STATUS_STREAM_ENABLED
 			UART_Output_Status(&uart_output, "streaming");
+#endif
 			HAL_TIM_Base_Start_IT(&htim3);
 		}
 	} else {
@@ -160,19 +184,47 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1) {
 
-		if (FFT_Processor_Process(&fft_processor, &fft_result)) {
+		uint8_t raw_fft_ready = FFT_Processor_Process(&fft_raw_processor,
+				&fft_raw_result);
+		uint8_t handled_fft_ready = FFT_Processor_Process(&fft_handled_processor,
+				&fft_handled_result);
+
+		if (raw_fft_ready && handled_fft_ready) {
+#if APP_UART_LEGACY_IMU_STREAM_ENABLED
 			UART_Output_SensorData(&uart_output,
 					(imu_sensor.initialized_components & SENSOR_ACCELEROMETER) ?
-							&accelerometer_data : 0,
+							&accelerometer_filtered_data : 0,
 					(imu_sensor.initialized_components & SENSOR_GYROSCOPE) ?
 							&gyroscope_data : 0,
 					(imu_sensor.initialized_components & SENSOR_MAGNETOMETER) ?
 							&magnetometer_data : 0);
+#endif
+#if APP_UART_ACCEL_COMPARISON_STREAM_ENABLED
+			uint32_t interrupt_state = __get_PRIMASK();
+			uint32_t comparison_time_ms;
+			float comparison_raw_value;
+			float comparison_handled_value;
+
+			__disable_irq();
+			comparison_time_ms = accelerometer_comparison_time_ms;
+			comparison_raw_value = accelerometer_comparison_raw_value;
+			comparison_handled_value = accelerometer_comparison_handled_value;
+			if (interrupt_state == 0U) {
+				__enable_irq();
+			}
+
+			UART_Output_AccelerometerComparison(&uart_output,
+					comparison_time_ms, comparison_raw_value,
+					comparison_handled_value);
+#endif
+#if APP_UART_FFT_STREAM_ENABLED
 			fft_output_counter++;
 			if (fft_output_counter >= FFT_OUTPUT_DECIMATION) {
 				fft_output_counter = 0;
-				UART_Output_FFTResult(&uart_output, &fft_result);
+				UART_Output_FFTComparison(&uart_output, &fft_raw_result,
+						&fft_handled_result);
 			}
+#endif
 		}
 
 #ifdef APP_MAVLINK_ENABLED
@@ -417,12 +469,29 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM3) {
-		if (ImuSensor_ReadAccelerometer(&imu_sensor, &accelerometer_data)) {
-			FFT_Processor_AddSample(&fft_processor,
-					accelerometer_data.acceleration[1]);
+		if (ImuSensor_ReadAccelerometer(&imu_sensor, &accelerometer_raw_data)) {
+			for (uint8_t axis = 0U; axis < 3U; axis++) {
+				accelerometer_filtered_data.acceleration[axis] =
+						SignalFilterChain_Process(&accelerometer_filter[axis],
+								accelerometer_raw_data.acceleration[axis]);
+			}
+			accelerometer_filtered_data.valid = accelerometer_raw_data.valid;
+			accelerometer_comparison_time_ms = HAL_GetTick();
+			accelerometer_comparison_raw_value =
+					accelerometer_raw_data.acceleration[APP_ACCEL_COMPARISON_AXIS];
+			accelerometer_comparison_handled_value =
+					accelerometer_filtered_data.acceleration[APP_ACCEL_COMPARISON_AXIS];
+			FFT_Processor_AddSample(&fft_raw_processor,
+					accelerometer_raw_data.acceleration[APP_ACCEL_COMPARISON_AXIS]);
+			FFT_Processor_AddSample(&fft_handled_processor,
+					accelerometer_filtered_data.acceleration[APP_ACCEL_COMPARISON_AXIS]);
 		}
-		ImuSensor_ReadGyroscope(&imu_sensor, &gyroscope_data);
-		ImuSensor_ReadMagnetometer(&imu_sensor, &magnetometer_data);
+		if (imu_sensor.initialized_components & SENSOR_GYROSCOPE) {
+			ImuSensor_ReadGyroscope(&imu_sensor, &gyroscope_data);
+		}
+		if (imu_sensor.initialized_components & SENSOR_MAGNETOMETER) {
+			ImuSensor_ReadMagnetometer(&imu_sensor, &magnetometer_data);
+		}
 	}
 }
 /* USER CODE END 4 */
