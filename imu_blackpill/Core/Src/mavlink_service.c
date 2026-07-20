@@ -1,7 +1,7 @@
-#include "mavlink_service.h"
 #include "app_config.h"
 
-#if APP_MAVLINK_ENABLED
+#ifdef APP_MAVLINK_ENABLED
+#include "mavlink_service.h"
 #include "common/mavlink.h"
 #include <stdio.h>
 
@@ -102,8 +102,6 @@ static void MAVLink_Service_ProcessReceivedBytes(MAVLink_Service *service) {
 		}
 	}
 }
-#endif
-
 void MAVLink_Service_Init(MAVLink_Service *service,
 		UART_HandleTypeDef *uart) {
 	service->uart = uart;
@@ -116,16 +114,14 @@ void MAVLink_Service_Init(MAVLink_Service *service,
 	service->rx_overflow_count = 0;
 	service->uart_error_count = 0;
 	service->attitude_valid = 0;
-
-#if APP_MAVLINK_ENABLED
 	active_service = service;
+	HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(USART2_IRQn);
 	HAL_UART_Receive_IT(service->uart, &service->rx_byte, 1);
-#endif
 }
 
 void MAVLink_Service_Process(MAVLink_Service *service,
 		const MagnetometerData *magnetometer) {
-#if APP_MAVLINK_ENABLED
 	uint32_t now = HAL_GetTick();
 	MAVLink_Service_ProcessReceivedBytes(service);
 
@@ -153,13 +149,8 @@ void MAVLink_Service_Process(MAVLink_Service *service,
 		service->status_time = now;
 		MAVLink_Service_SendStatus(service);
 	}
-#else
-	(void) service;
-	(void) magnetometer;
-#endif
 }
 
-#if APP_MAVLINK_ENABLED
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart) {
 	uint16_t next_head;
 

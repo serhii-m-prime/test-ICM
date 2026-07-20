@@ -24,7 +24,10 @@
 #include "icm20948.h"
 #include "fft_processor.h"
 #include "uart_output.h"
+#include "app_config.h"
+#ifdef APP_MAVLINK_ENABLED
 #include "mavlink_service.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,7 +68,9 @@ uint8_t fft_output_counter;
 
 #define FFT_OUTPUT_DECIMATION 4
 UART_Output uart_output;
+#ifdef APP_MAVLINK_ENABLED
 MAVLink_Service mavlink_service;
+#endif
 
 /* USER CODE END PV */
 
@@ -122,7 +127,9 @@ int main(void)
 	ICM20948_Bind(&imu_sensor, &imu);
 	FFT_Processor_Init(&fft_processor);
 	UART_Output_Init(&uart_output, &huart1);
+#ifdef APP_MAVLINK_ENABLED
 	MAVLink_Service_Init(&mavlink_service, &huart2);
+#endif
 	UART_Output_Status(&uart_output, "initializing sensor components");
 
 	if (ImuSensor_Init(&imu_sensor, REQUIRED_SENSOR_COMPONENTS)) {
@@ -168,7 +175,9 @@ int main(void)
 			}
 		}
 
+#ifdef APP_MAVLINK_ENABLED
 		MAVLink_Service_Process(&mavlink_service, &magnetometer_data);
+#endif
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -346,6 +355,9 @@ static void MX_USART2_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART2_Init 0 */
+#ifndef APP_MAVLINK_ENABLED
+	return;
+#endif
 
   /* USER CODE END USART2_Init 0 */
 

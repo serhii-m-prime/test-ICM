@@ -65,10 +65,11 @@ A missing or unavailable sensor component is represented by `null`.
 The STM32CubeMX configuration is stored in `imu_blackpill/imu_blackpill.ioc`. The firmware project can be imported into STM32CubeIDE and built using its Debug configuration.
 
 Application-level feature flags are stored in `imu_blackpill/Core/Inc/app_config.h`.
-Set `APP_MAVLINK_ENABLED` to `0` to compile out MAVLink packet generation and
-transmission, or to `1` to enable the component heartbeat service. The system ID,
-component ID, heartbeat interval, and UART transmit timeout are configured in the
-same file. USART2 pin and baud-rate configuration remains owned by STM32CubeMX.
+The MAVLink service is opt-in. Define `APP_MAVLINK_ENABLED` in `app_config.h` to
+include and activate it. If the symbol is not defined, no service instance is
+created, USART2 initialization returns without activating the peripheral, and
+the MAVLink implementation is compiled out. The system ID, component ID,
+heartbeat interval, and UART transmit timeout are configured in the same file.
 
 When enabled, the MAVLink service requests `ATTITUDE` from the ArduPilot
 component, publishes the latest magnetometer sample as `HIGHRES_IMU`, sends a
