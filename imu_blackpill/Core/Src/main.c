@@ -63,15 +63,16 @@ AccelerometerData accelerometer_filtered_data;
 GyroscopeData gyroscope_data;
 MagnetometerData magnetometer_data;
 ImuCalibrationData calibration_data;
-FFT_Processor fft_raw_processor;
-FFT_Processor fft_handled_processor;
-FFT_Result fft_raw_result;
-FFT_Result fft_handled_result;
+FFT_Processor fft_raw_processor[APP_ACCEL_AXIS_COUNT];
+FFT_Processor fft_handled_processor[APP_ACCEL_AXIS_COUNT];
+FFT_Result fft_raw_result[APP_ACCEL_AXIS_COUNT];
+FFT_Result fft_handled_result[APP_ACCEL_AXIS_COUNT];
 uint8_t fft_output_counter;
-SignalFilterChain accelerometer_filter[3];
+uint8_t fft_ready_axes_mask;
+SignalFilterChain accelerometer_filter[APP_ACCEL_AXIS_COUNT];
 volatile uint32_t accelerometer_comparison_time_ms;
-volatile float accelerometer_comparison_raw_value;
-volatile float accelerometer_comparison_handled_value;
+volatile float accelerometer_comparison_raw_value[APP_ACCEL_AXIS_COUNT];
+volatile float accelerometer_comparison_handled_value[APP_ACCEL_AXIS_COUNT];
 
 #define FFT_OUTPUT_DECIMATION 4
 UART_Output uart_output;
@@ -134,9 +135,11 @@ int main(void)
 	HAL_Delay(100);
 	ICM20948_Create(&imu, &hspi2, IMU_CS_GPIO_Port, IMU_CS_Pin);
 	ICM20948_Bind(&imu_sensor, &imu);
-	FFT_Processor_Init(&fft_raw_processor);
-	FFT_Processor_Init(&fft_handled_processor);
-	for (uint8_t axis = 0U; axis < 3U; axis++) {
+	for (uint8_t axis = 0U; axis < APP_ACCEL_AXIS_COUNT; axis++) {
+		FFT_Processor_Init(&fft_raw_processor[axis],
+				APP_ACCEL_FFT_REMOVE_MEAN);
+		FFT_Processor_Init(&fft_handled_processor[axis],
+				APP_ACCEL_FFT_REMOVE_MEAN);
 		if (!SignalFilterChain_Init(&accelerometer_filter[axis],
 				&accelerometer_filter_config)) {
 			Error_Handler();
@@ -188,12 +191,24 @@ int main(void)
 	while (1) {
 		UART_Output_Process(&uart_output);
 
-		uint8_t raw_fft_ready = FFT_Processor_Process(&fft_raw_processor,
-				&fft_raw_result);
-		uint8_t handled_fft_ready = FFT_Processor_Process(&fft_handled_processor,
-				&fft_handled_result);
+		for (uint8_t axis = 0U; axis < APP_ACCEL_AXIS_COUNT; axis++) {
+			uint8_t axis_mask = (uint8_t) (1U << axis);
+			if ((fft_ready_axes_mask & axis_mask) == 0U
+					&& fft_raw_processor[axis].ready
+					&& fft_handled_processor[axis].ready) {
+				uint8_t raw_fft_ready = FFT_Processor_Process(
+						&fft_raw_processor[axis], &fft_raw_result[axis]);
+				uint8_t handled_fft_ready = FFT_Processor_Process(
+						&fft_handled_processor[axis],
+						&fft_handled_result[axis]);
+				if (raw_fft_ready && handled_fft_ready) {
+					fft_ready_axes_mask |= axis_mask;
+				}
+			}
+		}
 
-		if (raw_fft_ready && handled_fft_ready) {
+		if (fft_ready_axes_mask == APP_ACCEL_ALL_AXES_MASK) {
+			fft_ready_axes_mask = 0U;
 #if APP_UART_LEGACY_IMU_STREAM_ENABLED
 			UART_Output_SensorData(&uart_output,
 					(imu_sensor.initialized_components & SENSOR_ACCELEROMETER) ?
@@ -206,13 +221,17 @@ int main(void)
 #if APP_UART_ACCEL_COMPARISON_STREAM_ENABLED
 			uint32_t interrupt_state = __get_PRIMASK();
 			uint32_t comparison_time_ms;
-			float comparison_raw_value;
-			float comparison_handled_value;
+			float comparison_raw_value[APP_ACCEL_AXIS_COUNT];
+			float comparison_handled_value[APP_ACCEL_AXIS_COUNT];
 
 			__disable_irq();
 			comparison_time_ms = accelerometer_comparison_time_ms;
-			comparison_raw_value = accelerometer_comparison_raw_value;
-			comparison_handled_value = accelerometer_comparison_handled_value;
+			for (uint8_t axis = 0U; axis < APP_ACCEL_AXIS_COUNT; axis++) {
+				comparison_raw_value[axis] =
+						accelerometer_comparison_raw_value[axis];
+				comparison_handled_value[axis] =
+						accelerometer_comparison_handled_value[axis];
+			}
 			if (interrupt_state == 0U) {
 				__enable_irq();
 			}
@@ -225,8 +244,10 @@ int main(void)
 			fft_output_counter++;
 			if (fft_output_counter >= FFT_OUTPUT_DECIMATION) {
 				fft_output_counter = 0;
-				UART_Output_FFTComparison(&uart_output, &fft_raw_result,
-						&fft_handled_result);
+				for (uint8_t axis = 0U; axis < APP_ACCEL_AXIS_COUNT; axis++) {
+					UART_Output_FFTComparison(&uart_output, axis,
+							&fft_raw_result[axis], &fft_handled_result[axis]);
+				}
 			}
 #endif
 		}
@@ -490,21 +511,21 @@ static void MX_GPIO_Init(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM3) {
 		if (ImuSensor_ReadAccelerometer(&imu_sensor, &accelerometer_raw_data)) {
-			for (uint8_t axis = 0U; axis < 3U; axis++) {
+			for (uint8_t axis = 0U; axis < APP_ACCEL_AXIS_COUNT; axis++) {
 				accelerometer_filtered_data.acceleration[axis] =
 						SignalFilterChain_Process(&accelerometer_filter[axis],
 								accelerometer_raw_data.acceleration[axis]);
+				accelerometer_comparison_raw_value[axis] =
+						accelerometer_raw_data.acceleration[axis];
+				accelerometer_comparison_handled_value[axis] =
+						accelerometer_filtered_data.acceleration[axis];
+				FFT_Processor_AddSample(&fft_raw_processor[axis],
+						accelerometer_raw_data.acceleration[axis]);
+				FFT_Processor_AddSample(&fft_handled_processor[axis],
+						accelerometer_filtered_data.acceleration[axis]);
 			}
 			accelerometer_filtered_data.valid = accelerometer_raw_data.valid;
 			accelerometer_comparison_time_ms = HAL_GetTick();
-			accelerometer_comparison_raw_value =
-					accelerometer_raw_data.acceleration[APP_ACCEL_COMPARISON_AXIS];
-			accelerometer_comparison_handled_value =
-					accelerometer_filtered_data.acceleration[APP_ACCEL_COMPARISON_AXIS];
-			FFT_Processor_AddSample(&fft_raw_processor,
-					accelerometer_raw_data.acceleration[APP_ACCEL_COMPARISON_AXIS]);
-			FFT_Processor_AddSample(&fft_handled_processor,
-					accelerometer_filtered_data.acceleration[APP_ACCEL_COMPARISON_AXIS]);
 		}
 		if (imu_sensor.initialized_components & SENSOR_GYROSCOPE) {
 			ImuSensor_ReadGyroscope(&imu_sensor, &gyroscope_data);

@@ -244,22 +244,27 @@ void UART_Output_SensorData(UART_Output *output,
 }
 
 void UART_Output_AccelerometerComparison(UART_Output *output,
-		uint32_t time_ms, float raw_value, float handled_value) {
-	char buffer[96];
+		uint32_t time_ms, const float raw_value[3],
+		const float handled_value[3]) {
+	char buffer[160];
 
-	snprintf(buffer, sizeof(buffer), "[4,[%lu,%.4f,%.4f]]\r\n",
-			(unsigned long) time_ms, raw_value, handled_value);
+	snprintf(buffer, sizeof(buffer),
+			"[4,[%lu,[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]]]\r\n",
+			(unsigned long) time_ms,
+			raw_value[0], raw_value[1], raw_value[2],
+			handled_value[0], handled_value[1], handled_value[2]);
 	UART_Output_Send(output, buffer);
 }
 
 void UART_Output_FFTComparison(UART_Output *output,
-		const FFT_Result *raw_result, const FFT_Result *handled_result) {
+		uint8_t axis, const FFT_Result *raw_result,
+		const FFT_Result *handled_result) {
 	size_t used = 0U;
 	bool valid;
 
 	valid = UART_Output_AppendFormat(output->message_buffer,
 			UART_OUTPUT_MESSAGE_BUFFER_SIZE, &used,
-			"[2,[%.4f,%.4f,%.4f,%.4f,%.4f],[",
+			"[2,%u,[%.4f,%.4f,%.4f,%.4f,%.4f],[", axis,
 			handled_result->peak_frequency, handled_result->peak_amplitude,
 			handled_result->frequency_resolution, raw_result->peak_frequency,
 			raw_result->peak_amplitude);

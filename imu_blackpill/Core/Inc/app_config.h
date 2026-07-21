@@ -1,6 +1,7 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
+#include <stdbool.h>
 #include "imu_sensor.h"
 
 /* Only the accelerometer is initialized in the current firmware build. */
@@ -12,12 +13,16 @@
 #define APP_UART_FFT_STREAM_ENABLED              1
 #define APP_UART_STATUS_STREAM_ENABLED           1
 
-/* Axis included in message type 4 and processed by FFT: 0=X, 1=Y, 2=Z. */
-#define APP_ACCEL_COMPARISON_AXIS 1U
+/* The comparison stream and FFT include all accelerometer axes: X, Y, Z. */
+#define APP_ACCEL_AXIS_COUNT     3U
+#define APP_ACCEL_ALL_AXES_MASK ((1U << APP_ACCEL_AXIS_COUNT) - 1U)
 
-#if APP_ACCEL_COMPARISON_AXIS > 2U
-#error "APP_ACCEL_COMPARISON_AXIS must be 0 (X), 1 (Y), or 2 (Z)"
-#endif
+/* Per-sensor FFT preprocessing. Mean removal suppresses only the DC bin.
+ * It is enabled for acceleration to remove the static gravity projection.
+ * Gyroscope and magnetometer defaults preserve their static components. */
+#define APP_ACCEL_FFT_REMOVE_MEAN true
+#define APP_GYRO_FFT_REMOVE_MEAN  false
+#define APP_MAG_FFT_REMOVE_MEAN   false
 
 // Define APP_MAVLINK_ENABLED to include and activate the MAVLink service.
 #ifdef APP_MAVLINK_ENABLED

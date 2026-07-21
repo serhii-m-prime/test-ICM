@@ -35,9 +35,14 @@ void UART_Output_SensorData(UART_Output *output,
 		const AccelerometerData *accelerometer,
 		const GyroscopeData *gyroscope,
 		const MagnetometerData *magnetometer);
+/* [4,[time_ms,[raw_x,raw_y,raw_z],[handled_x,handled_y,handled_z]]] */
 void UART_Output_AccelerometerComparison(UART_Output *output,
-		uint32_t time_ms, float raw_value, float handled_value);
+		uint32_t time_ms, const float raw_value[3],
+		const float handled_value[3]);
+/* [2,axis,[handled_peak_hz,handled_amp,hz_per_bin,raw_peak_hz,raw_amp],...]
+ * axis: 0=X, 1=Y, 2=Z; followed by handled and raw magnitude arrays. */
 void UART_Output_FFTComparison(UART_Output *output,
-		const FFT_Result *raw_result, const FFT_Result *handled_result);
+		uint8_t axis, const FFT_Result *raw_result,
+		const FFT_Result *handled_result);
 
 #endif
